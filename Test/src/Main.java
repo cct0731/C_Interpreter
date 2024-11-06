@@ -2,28 +2,6 @@
 import java.util.Scanner;
 import java.util.ArrayList;
 import java.util.Stack;
-import java.util.function.DoubleUnaryOperator;
-
-//class Main {
-//  public static void main( String[] args ) {
-//    String str = "1+2/2";
-//  }
-//
-//  public static void toRPN( String str ) {
-//
-//
-//
-//
-//
-//
-//  }
-//
-//  public static int get_weight( char ch ) {
-//    if ( ch == '*' || ch == '/' ) return 10;
-//    if ( ch == '+' || ch == '-' ) return 5;
-//    return 0;
-//  }
-//}
 
 class Token{
 // only ID may have value
@@ -33,6 +11,7 @@ class Token{
   String m_value;
   String m_type;
   String m_def_ins;
+  boolean m_is_str; // 為了解決文字運算新加上去的 :)
 
   public void Set_name( String str ) {
     this.m_name = str;
@@ -50,6 +29,10 @@ class Token{
     this.m_def_ins = str;
   } // Set_def_ins()
 
+  public void Set_is_str( boolean b ) {
+    this.m_is_str = b;
+  }
+
   public String Get_name() {
     return m_name;
   } // Get_name()
@@ -66,6 +49,9 @@ class Token{
     return m_def_ins;
   } // Get_def_ins()
 
+  public boolean Is_str() {
+    return m_is_str;
+  }
 } // class Token
 
 class Reader{
@@ -444,6 +430,7 @@ class Reader{
     ret.Set_value( "" );
     ret.Set_type( type );
     ret.Set_def_ins( "" );
+    ret.Set_is_str( false );
     return ret;
   } // Get_token()
 
@@ -1885,10 +1872,12 @@ class Executor{
 
   ArrayList<Token> m_ID_table;
   ArrayList<Token> m_Func_table;
+  ArrayList<Token> m_Arr_variables;
 
   Executor() {
     m_ID_table = new ArrayList<Token>();
     m_Func_table = new ArrayList<Token>();
+    m_Arr_variables = new ArrayList<Token>();
   } // Executor()
 
   // ================================================================================
@@ -1919,9 +1908,40 @@ class Executor{
     else return "stat";
   } // Get_ins_type()
 
+  private void Transform_arr_var( ArrayList<Token> ins ) {
+  // 把arr[0] 換成 _arr0
+    ArrayList<Token> new_ins = new ArrayList<Token>(); // 這樣比較好處理
+    for ( int i = 0; i < ins.size(); i++ ) {
+      if ( ins.get( i ).Get_name().equals( "[" ) ) {
+      // 把上一個tk跟下兩個tk結合
+        Token last1 = ins.get( i - 1 );
+        Token next1 = ins.get( i + 1 );
+        String str = "_" + last1.Get_name() + next1.Get_name();
+        int idx = Get_Arr_var_index( str );
+        if ( idx != -1 ) {
+          new_ins.remove( new_ins.size() - 1 ); // 當下最後一個token是"["
+          new_ins.add( m_Arr_variables.get( idx ) );
+        }
+
+        i = i + 2; // skip token
+      }
+
+      else {
+        new_ins.add( ins.get( i ) );
+      }
+    }
+    // 這樣才能修改到原本的物件
+    ins.clear();
+    ins.addAll( new_ins );
+  }
+
   private void Add_ID( Token tk ) {
     m_ID_table.add( tk );
   } // Add_ident()
+
+  private void Add_Arr( Token tk ) {
+    m_Arr_variables.add( tk );
+  }
 
   private void Add_func( Token tk ) {
     m_Func_table.add( tk );
@@ -1944,26 +1964,6 @@ class Executor{
 
     return false;
   } // In_func_table()
-
-  private String Get_ID_def_ins( ArrayList<Token> ins, int idxOfVar ) {
-    // string str, str1 ;
-    // string str3 ;
-    // char chArray[30] ;
-    String ret = ins.get( 0 ).Get_name() + " "; // type;
-    if ( Is_Array_def( ins ) ) {
-      ret = ret + ins.get( idxOfVar ).Get_name();
-      ret = ret + ins.get( idxOfVar+1 ).Get_name() + " ";
-      ret = ret + ins.get( idxOfVar+2 ).Get_name() + " ";
-      ret = ret + ins.get( idxOfVar+3 ).Get_name();
-    } // if
-
-    else {
-      ret = ret + ins.get( idxOfVar ).Get_name();
-    } // else
-
-    ret = ret + " ;";
-    return ret;
-  } // Get_ID_def_ins()
 
   private void Init_val( String type, Token tk ) {
 
@@ -1988,51 +1988,26 @@ class Executor{
     }
   }
 
-  private ArrayList<Token> Get_def_tk( ArrayList<Token> ins ) {
-    // 回傳要定義的變數們、設定變數訊息
-    String type = ins.get( 0 ).Get_name(); // 變數型別
-    ArrayList<Token> ret = new ArrayList<Token>();
-    if ( Is_Array_def( ins ) ) {
-      // 定義array
-      for ( int i = 1; i < ins.size() ; i = i + 5 ) {
-        Token tmp = ins.get( i );
-        if ( In_ID_table( tmp ) ) {
-          tmp = m_ID_table.get( Get_ID_index( tmp.Get_name() ) ); // 更新到真正的IDENT
-        } // if
+  private void Init_arr( String type, Token tk, int size ) {
+    String prefix = "_" + tk.Get_name();
 
-        String def = Get_ID_def_ins( ins, i );
-        tmp.Set_def_ins( def );
-        ret.add( tmp );
-      } // for
-    } // if
+    for ( int i = 0; i < size; i++ ) {
+      Token new_tk = new Token();
+      new_tk.Set_name( prefix + Integer.toString( i ) );
+      new_tk.Set_type( "IDENT" );
+      Init_val( type, new_tk );
 
-    else {
-      // 一般定義
-      for ( int i = 1; i < ins.size() ; i = i + 2 ) {
-        Token tmp = ins.get( i );
-        if ( In_ID_table( tmp ) ) {
-          tmp = m_ID_table.get( Get_ID_index( tmp.Get_name() ) ); // 更新到真正的IDENT
-        } // if
+      if ( type.equals( "char" ) || type.equals( "string" ) ) {
+        new_tk.Set_is_str( true );
+      }
 
-        String def = Get_ID_def_ins( ins, i );
-        tmp.Set_def_ins( def );
-        Init_val( type, tmp ); // 初始化value
-        ret.add( tmp );
-      } // for
-    } // else
+      else {
+        new_tk.Set_is_str( false );
+      }
 
-    return ret;
-  } // Get_def_tk()
-
-  private boolean Is_Array_def( ArrayList<Token> ins ) {
-
-    for ( int i = 0; i < ins.size() ; i++ ) {
-      String name = ins.get( i ).Get_name();
-      if ( name.equals( "[" ) || name.equals( "]" ) ) return true;
-    } // for
-
-    return false;
-  } // Is_Array_def()
+      Add_Arr( new_tk );
+    }
+  }
 
   private String Get_Stat_method( ArrayList<Token> ins ) {
     // 檢查內建function call
@@ -2108,6 +2083,14 @@ class Executor{
 
     return -1;
   } // Get_ID_index()
+
+  private int Get_Arr_var_index( String str ) {
+    for ( int i = 0; i < m_Arr_variables.size(); i++ ) {
+      if ( m_Arr_variables.get( i ).Get_name().equals( str ) ) return i;
+    }
+
+    return -1;
+  }
 
   private int Get_func_index( String str ) {
     for ( int i = 0; i < m_Func_table.size() ; i++ ) {
@@ -2216,19 +2199,33 @@ class Executor{
     return ret;
   } // Get_func_content()
 
-  private int get_weight( String str ) {
+  private int Get_weight( String str ) {
   // 返回權重
     if ( str.equals( "*" ) || str.equals( "/" ) ) return 10;
     if ( str.equals( "+" ) || str.equals( "-" ) ) return 5;
     else return 1;
   }
 
-  private boolean is_operator( String str ) {
+  private boolean Is_operator( String str ) {
     if ( str.equals( "+" ) || str.equals( "-" ) || str.equals( "*" ) || str.equals( "/" ) ) return true;
     return false;
   }
 
-  private boolean is_string( String str ) {
+  private boolean Is_string( Token tk ) {
+
+    String str;
+
+    if ( tk.Get_type().equals( "IDENT" ) ) {
+      str = tk.Get_value();
+      if ( tk.Is_str() ) {
+        return true;
+      }
+    }
+
+    else {
+    // 一般const
+      str = tk.Get_name();
+    }
 
     if ( str.isEmpty() ) {
       return true; // 只有初始化的char會是空字串，要把它當成一個字串
@@ -2246,25 +2243,39 @@ class Executor{
     return false;
   }
 
-  private ArrayList<Token> toRPN( ArrayList<Token> expr ) {
+  private ArrayList<Token> To_RPN( ArrayList<Token> expr ) {
   // 逆波蘭表示法
     Stack<Token> s = new Stack<Token>();
     ArrayList<Token> postfix = new ArrayList<Token>();
+    boolean expect_operand = true; // 期待下一個token是數字、變數，用來處理unary operation
 
     for ( Token tk : expr ) {
-      if ( is_operator( tk.Get_name() ) ) {
-        while ( !s.isEmpty() && get_weight( s.peek().Get_name() ) >= get_weight( tk.Get_name() ) ) {
-        // 權重比stack中的小，拿出來
-          postfix.add( s.pop() );
+      if ( Is_operator( tk.Get_name() ) ) {
+        if ( expect_operand && ( tk.Get_name().equals( "+" ) || tk.Get_name().equals( "-" ) ) ) {
+          Token new_tk = new Token();
+          new_tk.Set_name( "0" );
+          new_tk.Set_value( "0" );
+          new_tk.Set_type( "CONST" );
+          postfix.add( new_tk );
+          s.push( tk );
         }
 
-        // 放得進去了，把tk放入stack
-        s.push( tk );
+        else {
+          while ( !s.isEmpty() && Get_weight( s.peek().Get_name() ) >= Get_weight( tk.Get_name() ) ) {
+            // 權重比stack中的小，拿出來
+            postfix.add( s.pop() );
+          }
+
+          // 放得進去了，把tk放入stack
+          s.push( tk );
+          expect_operand = true;
+        }
       }
 
       else if ( tk.Get_name().equals( "(" ) ) {
       // 直接丟到s中
         s.push( tk );
+        expect_operand = true;
       }
 
       else if ( tk.Get_name().equals( ")" ) ) {
@@ -2274,11 +2285,13 @@ class Executor{
         }
 
         s.pop(); // 把"("丟了
+        expect_operand = false;
       }
 
       else {
       // 數字、變數直接丟進去
         postfix.add( tk );
+        expect_operand = false;
       }
     }
 
@@ -2295,14 +2308,24 @@ class Executor{
 
     for ( Token tk : postfix ) {
       String str = tk.Get_name();
-      if ( is_operator( str ) ) {
-      // 遇到operator要計算，注意順序 !!!!
+      if ( Is_operator( str ) ) {
+      // 遇到operator要計算，注意順序 !!!
         Token tk1 = s.pop();
         Token tk2 = s.pop();
         String s1, s2;
         // IDENT要把value取出來
         if ( tk1.Get_type().equals( "IDENT" ) ) {
-          s1 = m_ID_table.get( Get_ID_index( tk1.Get_name() ) ).Get_value();
+          int idx = Get_ID_index( tk1.Get_name() );
+          if ( idx != -1 ) {
+          // 一般變數
+            s1 = m_ID_table.get( idx ).Get_value();
+          }
+
+          else {
+          // array變數
+            idx = Get_Arr_var_index(tk1.Get_name() );
+            s1 = m_Arr_variables.get( idx ).Get_value();
+          }
         }
 
         else {
@@ -2310,7 +2333,17 @@ class Executor{
         }
 
         if ( tk2.Get_type().equals( "IDENT" ) ) {
-          s2 = m_ID_table.get( Get_ID_index( tk2.Get_name() ) ).Get_value();
+          int idx = Get_ID_index( tk2.Get_name() );
+          if ( idx != -1 ) {
+            // 一般變數
+            s2 = m_ID_table.get( idx ).Get_value();
+          }
+
+          else {
+            // array變數
+            idx = Get_Arr_var_index(tk2.Get_name() );
+            s2 = m_Arr_variables.get( idx ).Get_value();
+          }
         }
 
         else {
@@ -2318,7 +2351,7 @@ class Executor{
         }
 
         Token new_tk = new Token();
-        new_tk.Set_name( do_arith( str, s2, s1 ) );
+        new_tk.Set_name( Do_arith( str, s2, s1 ) );
         new_tk.Set_type( "CONST" ); // 要設置type讓之後取出來可以檢查
         s.push( new_tk );
       }
@@ -2330,13 +2363,22 @@ class Executor{
 
     Token tk = s.pop();
     if ( tk.Get_type().equals( "IDENT" ) ) {
-      return m_ID_table.get( Get_ID_index( tk.Get_name() ) ).Get_value(); // 正常經過運算後IDENT會被轉成value計算，沒經過運算要轉換
+    // 正常經過運算後IDENT會被轉成value計算，沒經過運算要轉換
+      int idx = Get_ID_index( tk.Get_name() );
+      if ( idx != -1 ) {
+        return m_ID_table.get( idx ).Get_value();
+      }
+
+      else {
+        idx = Get_Arr_var_index( tk.Get_name() );
+        return m_Arr_variables.get( idx ).Get_value();
+      }
     }
 
     else return tk.Get_name();
   }
 
-  private String do_arith( String s1, String s2, String s3 ) {
+  private String Do_arith( String s1, String s2, String s3 ) {
     if ( s1.equals( "+" ) ) return Double.toString(Double.parseDouble(s2) + Double.parseDouble(s3));
     if ( s1.equals( "-" ) ) return Double.toString(Double.parseDouble(s2) - Double.parseDouble(s3));
     if ( s1.equals( "*" ) ) return Double.toString(Double.parseDouble(s2) * Double.parseDouble(s3));
@@ -2344,7 +2386,7 @@ class Executor{
     return "";
   }
 
-  private String do_expr( ArrayList<Token> expr ) {
+  private String Do_expr( ArrayList<Token> expr ) {
   // 做數值運算、字串運算、布林運算
     String result = "";
     boolean str_ope = false;
@@ -2352,19 +2394,27 @@ class Executor{
     for( Token tk : expr ) {
 
       String name = tk.Get_name(); // 下面太長了
+      int idx1 = Get_ID_index( tk.Get_name() );
+      int idx2 = Get_Arr_var_index(tk.Get_name() );
 
-      if ( tk.Get_type().equals( "CONST" ) && is_string( name ) ) {
+      if ( tk.Get_type().equals( "CONST" ) && Is_string( tk ) ) {
       // CONST的string
-        if ( tk.Get_name().charAt( 0 ) == '\"' || tk.Get_name().charAt( 0 ) == '\'' ) {
+        if ( name.charAt( 0 ) == '\"' || name.charAt( 0 ) == '\'' ) {
         // 把引號拿掉
-          tk.Set_name( name.substring( 1, name.length() - 1 ) );
+          name = String_manipulation( name );
+          tk.Set_name( name );
         }
 
         str_ope = true;
       }
 
-      else if ( tk.Get_type().equals( "IDENT" ) && is_string( m_ID_table.get( Get_ID_index( name ) ).Get_value() ) ) {
-      // 變數是string
+      else if ( tk.Get_type().equals( "IDENT" ) && idx1 != -1 && Is_string( m_ID_table.get( idx1 ) ) ) {
+      // 變數是string，檢查ID table
+        str_ope = true;
+      }
+
+      else if ( tk.Get_type().equals( "IDENT" ) && idx2 != -1 && Is_string( m_Arr_variables.get( idx2 ) ) ) {
+      // 變數是string，檢查Array Variable table
         str_ope = true;
       }
     }
@@ -2387,11 +2437,86 @@ class Executor{
 
     else {
     // 普通的數值運算
-      ArrayList<Token> postfix = toRPN( expr );
+      ArrayList<Token> postfix = To_RPN( expr );
       result = Evaluate_postfix( postfix );
     }
 
     return result;
+  }
+
+  private String String_manipulation( String str ) {
+  // 處理要輸出的字串
+    String ret = "";
+    str = str.substring( 1, str.length() - 1 );
+    int idx = 0;
+    while ( idx < str.length() ) {
+      char ch = str.charAt( idx );
+      if ( ch == 'n' && ( ( idx - 1 ) >= 0 ) && str.charAt( idx - 1 ) == '\\' ) {
+      // 換行符號
+        ret = ret.substring( 0, ret.length() - 1 );
+        ret = ret + "\n";
+      }
+
+      else {
+        ret = ret + ch;
+      }
+
+      idx = idx + 1 ;
+    }
+
+    return ret;
+  }
+
+  private String Assign_variables( ArrayList<Token> ins ) {
+    ArrayList<String> var_name = new ArrayList<String>();
+    ArrayList<Token> expr = new ArrayList<>();
+    int idx = 0;
+
+    if ( ins.get( 0 ).Get_name().equals( "(" ) && ins.get( ins.size() - 1 ).Get_name().equals( ")" ) ) {
+    // assignment被括號刮起來，這樣去做運算會出事，要移除
+      ins.remove( 0 );
+      ins.remove( ins.size() - 1 );
+    }
+
+    while ( idx < ins.size() && !ins.get( idx ).Get_name().equals( "=" ) ) {
+      // 把等號左邊的變數都取出來
+      Token tk = ins.get( idx );
+      if ( tk.Get_type().equals( "IDENT" ) ) {
+        var_name.add( tk.Get_name() );
+      }
+
+      idx = idx + 1;
+    }
+
+    idx = idx + 1; // skip "="
+
+    // 把expr取出來
+    while ( idx < ins.size() ) {
+      expr.add( ins.get( idx ) );
+      idx = idx + 1;
+    }
+
+    if ( expr.get( expr.size() - 1 ).Get_name().equals( ";" ) ) {
+    // 移除 ";"
+      expr.remove( expr.size() - 1 );
+    }
+
+    String val = Do_expr( expr );
+
+    for ( String var : var_name ) {
+      // 把val的值寫入table中
+      idx = Get_ID_index( var );
+      if ( idx != -1 ) {
+        m_ID_table.get( idx ).Set_value( val );
+      }
+
+      else {
+        idx = Get_Arr_var_index( var );
+        m_Arr_variables.get( idx ).Set_value( val );
+      }
+    }
+
+    return val;
   }
 
   public void Execute_ins( ArrayList<Token> ins ) {
@@ -2400,18 +2525,74 @@ class Executor{
     System.out.print( "> " );
     if ( ins_tp.equals( "def" ) ) {
       // 定義IDENT或是array
-      ArrayList<Token> def_tk = Get_def_tk( ins );
-      for ( int i = 0; i < def_tk.size() ; i++ ) {
-        Token tk = def_tk.get( i );
-        if ( !In_ID_table( tk ) ) {
-          // 第一次define
-          Add_ID( tk );
-          System.out.println( "Definition of " + tk.Get_name() + " entered ..." );
-        } // if
+      String type = ins.get( 0 ).Get_name();
+      ArrayList<Token> declaration = new ArrayList<Token>(); // 宣告內容
+      for ( int idx = 1; idx < ins.size(); idx++ ) {
+      // 可能宣告很多個變數，一個一個處裡
+        Token tk = ins.get( idx );
+        if ( tk.Get_name().equals( "," ) || tk.Get_name().equals( ";" ) ) {
+        // 寫入宣告內容
+          String str = type + " ";
+          boolean is_arr = false; // 這樣處理比較方便，雖然比較醜
+          int arr_size = -1;
+          for ( Token tmp : declaration ) {
+          // 處裡宣告內容
+
+            if ( is_arr ) {
+              arr_size = Integer.parseInt( tmp.Get_name() );
+              is_arr = false;
+            }
+
+            if ( tmp.Get_name().equals( "[" ) ) {
+              str = str.substring( 0, str.length() - 1 ); // 去掉空白
+              is_arr = true;
+            }
+
+            str = str + tmp.Get_name() + " ";
+          }
+
+          str = str + ";";
+          tk = declaration.get( 0 ); // tk現在是要宣告的變數
+          boolean re_decl = false;
+          if ( In_ID_table( tk ) ) {
+          // 重複定義
+            System.out.println( "New definition of " + tk.Get_name() + " entered ..." );
+            tk = m_ID_table.get( Get_ID_index( tk.Get_name() ) );
+            re_decl = true;
+          }
+
+          else {
+          // 第一次定義
+            System.out.println( "Definition of " + tk.Get_name() + " entered ..." );
+          }
+
+          if ( type.equals( "char" ) || type.equals( "string" ) ) {
+            tk.Set_is_str( true );
+          }
+
+          else {
+            tk.Set_is_str( false );
+          }
+
+          // 設定token的參數
+          tk.Set_def_ins( str );
+          if ( arr_size != -1 ) {
+            Init_arr(type, tk, arr_size);
+          }
+
+          else {
+            Init_val( type, tk );
+          }
+
+          if ( !re_decl ) {
+            Add_ID( tk );
+          }
+
+          declaration.clear();
+        }
 
         else {
-          // 重複define
-          System.out.println( "New definition of " + tk.Get_name() + " entered ..." );
+          declaration.add( tk );
         } // else
       } // for
     } // if
@@ -2441,6 +2622,7 @@ class Executor{
     else {
       // statement
       String stat_tp = Get_Stat_method( ins );
+      Transform_arr_var( ins );
 
       if ( stat_tp.equals( "LAV" ) ) {
         Sort_ID_table();
@@ -2469,61 +2651,53 @@ class Executor{
       } // else if
 
       else if ( stat_tp.equals( "ASSIGN" ) ) {
-      // 能夠成功執行到這裡代表variable已經被建立了
-        ArrayList<String> var_name = new ArrayList<String>();
-        ArrayList<Token> expr = new ArrayList<>();
-        int idx = 0;
-
-        while ( idx < ins.size() && !ins.get( idx ).Get_name().equals( "=" ) ) {
-        // 把等號左邊的變數都取出來
-          Token tk = ins.get( idx );
-          if ( tk.Get_type().equals( "IDENT" ) ) {
-            var_name.add( tk.Get_name() );
-          }
-
-          idx = idx + 1;
-        }
-
-        idx = idx + 1; // skip "="
-
-        // 把expr取出來
-        while ( idx < ins.size() - 1) {
-        // 不需要拿";"
-          expr.add( ins.get( idx ) );
-          idx = idx + 1;
-        }
-
-        String val = do_expr( expr );
-
-        for ( String var : var_name ) {
-        // 把val的值寫入ID_table中的變數
-          idx = Get_ID_index( var );
-          m_ID_table.get( idx ).Set_value( val );
-        }
+        Assign_variables( ins );
       }
 
       else if ( stat_tp.equals( "COUT" ) ) {
       // cout
         int idx = 2; // skip "cout" 、 "<<"
+        boolean is_assign = false;
         ArrayList<Token> expr = new ArrayList<Token>();
         while ( idx < ins.size() ) {
+        // 取出expression做運算、輸出
           String tk_name = ins.get(idx).Get_name();
           if ( tk_name.equals( "<<" ) || tk_name.equals( ">>" ) ) {
-          // 一個expression完結，做運算
-            System.out.print( do_expr( expr ) );
+          // 一個expression完結
+            if ( is_assign ) {
+            // cout << ( a = 123 + 2 ) ; 這種case
+              System.out.print( Assign_variables( expr ) );
+              is_assign = false;
+            }
+
+            else {
+              System.out.print( Do_expr( expr ) );
+            }
+
             expr.clear();
           }
 
           else {
+            if ( tk_name.equals( "=" ) ) {
+              is_assign = true;
+            }
+
             expr.add( ins.get( idx ) );
           }
 
           idx = idx + 1;
         }
 
-        // 最後一run
+        // 最後一run沒執行到
         expr.remove( expr.size() - 1 ); // 去掉";"
-        System.out.print( do_expr( expr ) );
+        if ( is_assign ) {
+          System.out.print( Assign_variables( expr ) );
+        }
+
+        else {
+          System.out.print( Do_expr( expr ) );
+        }
+
         expr.clear();
       }
 
