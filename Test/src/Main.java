@@ -1,4 +1,5 @@
 // package PL112_11027215;
+import java.awt.image.TileObserver;
 import java.util.Scanner;
 import java.util.ArrayList;
 import java.util.Stack;
@@ -143,8 +144,6 @@ class Reader{
     else if ( Is_other( ch0 ) ) return "OTHERS";
 
     else if ( Is_letter( ch0 ) ) return "IDENT";
-
-    else if ( ch0 == '\"' || ch0 == '\'' ) return "CONST";
 
     else return "UNKNOWN";
   } // Classify_type()
@@ -511,8 +510,7 @@ class Parser{
   Token m_undefined_tk;    // token not in ID_table and not defined
   ArrayList<Token> m_ID_table;   // 紀錄已定義IDENT的table
   ArrayList<Token> m_func_table; // 紀錄已定義function的table
-  Stack<Integer> m_tmpstack;     // compound statement可能會重複呼叫，所以不能用bool紀錄，改用stack
-  ArrayList<Token> m_tmp_ID_table; // 假執行暫時定義的table
+  Stack<ArrayList<Token>> m_stack_table; // compound statement可能會重複呼叫，用stack來紀錄每個變數的作用範圍
   boolean m_is_func_def;           // 記錄這個指令是不是function定義
 
   Parser( Reader r, ArrayList<Token> table1, ArrayList<Token> table2 ) {
@@ -523,8 +521,7 @@ class Parser{
     m_undefined_tk = null;
     m_ID_table = table1;
     m_func_table = table2;
-    m_tmpstack = new Stack<Integer>();
-    m_tmp_ID_table = new ArrayList<Token>();
+    m_stack_table = new Stack<ArrayList<Token>>();
     m_is_func_def = false;
   } // Parser()
 
@@ -543,7 +540,7 @@ class Parser{
     m_unexpected_tk = null;
     m_undefined_tk = null;
     m_curr_token = null;
-    m_tmp_ID_table.clear(); // 這個很重要
+    m_stack_table.clear();
     m_is_func_def = false;
   } // Reset_variable()
 
@@ -631,15 +628,6 @@ class Parser{
     else return false;
   } // IsTypeSpecifier()
 
-  private boolean IsExpressionStart( Token token ) {
-
-    if ( token.m_type.equals( "IDENT" ) || token.m_type.equals( "CONST" ) ) return true;
-    else if ( IsPPorMM( token ) ) return true;
-    else if ( IsSign_2( token ) ) return true;
-    else if ( token.m_name.equals( "(" ) ) return true;
-    return false;
-  } // IsExpressionStart()
-
   private boolean IsAssignmentOperator( Token token ) {
     // 名字短一點，不然下面if長度會炸開
     String n = token.Get_name(); // name
@@ -700,11 +688,29 @@ class Parser{
 
     if ( Is_save_word( tk ) ) return true; // save word
 
-    if ( !m_tmpstack.empty() ) {
+    if ( !m_stack_table.empty() ) {
       // 檢查在compound statement裡面的宣告
-      for ( int i = 0; i < m_tmp_ID_table.size() ; i++ ) {
-        if ( m_tmp_ID_table.get( i ).Get_name().equals( name ) ) return true;
-      } // for
+      ArrayList<ArrayList<Token>> records = new ArrayList<ArrayList<Token>>(); // 儲存pop出來的tables
+      while ( !m_stack_table.empty() ) {
+        ArrayList<Token> tmp = m_stack_table.pop();
+        records.add( tmp );
+        for ( int i = 0; i < tmp.size() ; i++ ) {
+          if ( tmp.get( i ).Get_name().equals( name ) ) {
+          // 找到了 !!!
+            for ( int j = records.size() - 1; j >= 0; j-- ) {
+            // 先把tables放回去
+              m_stack_table.push( records.get( j ) );
+            }
+
+            return true;
+          }
+        }
+      }
+
+      for ( int j = records.size() - 1; j >= 0; j-- ) {
+        // 找不到也要把tables放回去
+        m_stack_table.push( records.get( j ) );
+      }
     } // if
 
     return false;
@@ -848,9 +854,11 @@ class Parser{
         return false;
       } // if
 
-      if ( !m_tmpstack.empty() ) {
-        // 是compound statement的呼叫
-        m_tmp_ID_table.add( m_curr_token );
+      if ( !m_stack_table.empty() ) {
+        // 是compound statement的呼叫，預先宣告變數
+        ArrayList<Token> tmp = m_stack_table.pop();
+        tmp.add( m_curr_token );
+        m_stack_table.push( tmp );
       } // if
 
       Next_token(); // eat IDENT
@@ -948,7 +956,17 @@ class Parser{
 
     if ( m_is_func_def ) {
       // 假執行，讓後面compound statement的檢查可以過
-      m_tmp_ID_table.add( m_curr_token );
+      if ( !m_stack_table.empty() ) {
+        ArrayList<Token> tmp = m_stack_table.pop();
+        tmp.add( m_curr_token );
+        m_stack_table.push( tmp );
+      }
+
+      else {
+        ArrayList<Token> tmp = new ArrayList<Token>();
+        tmp.add( m_curr_token );
+        m_stack_table.push( tmp );
+      }
     } // if
 
     Next_token(); // eat IDENT
@@ -971,35 +989,35 @@ class Parser{
 
   private boolean Parse_Compound_statement() {
     // '{' { declaration | statement } '}'
-    Integer tmp = 1;
-    m_tmpstack.push( tmp ); // 進來就push，離開就pop，這樣讓其他function知道現在是否在compound statement裡面
+    ArrayList<Token> tmp = new ArrayList<Token>();
+    m_stack_table.push( tmp ); // 進入compound_statement就push，離開就pop，用stack判斷是否在compound_statement中
     if ( !m_curr_token.Get_name().equals( "{" ) ) {
-      m_tmpstack.pop();
+      m_stack_table.pop();
       return false;
     } // if
 
     Next_token(); // eat '{'
     while ( !m_curr_token.Get_name().equals( "}" ) ) {
       if ( m_curr_token == null ) {
-        m_tmpstack.pop();
+        m_stack_table.pop();
         return false;
       } // if
 
       if ( !Is_Declaration_or_Statement( m_curr_token ) ) {
-        m_tmpstack.pop();
+        m_stack_table.pop();
         return false;
       } // if
 
       if ( IsTypeSpecifier( m_curr_token ) ) {
         if ( !Parse_Declaration() ) {
-          m_tmpstack.pop();
+          m_stack_table.pop();
           return false;
         } // if
       } // if
 
       else {
         if ( !Parse_Statement() ) {
-          m_tmpstack.pop();
+          m_stack_table.pop();
           return false;
         } // if
       } // else
@@ -1008,7 +1026,7 @@ class Parser{
     } // while
 
     Next_token(); // eat '}'
-    m_tmpstack.pop();
+    m_stack_table.pop();
     return true;
   } // Parse_Compound_statement()
 
@@ -1024,9 +1042,11 @@ class Parser{
     } // if
 
     // 如果是parse_compound Statement的呼叫要丟入tmp table裡面假執行
-    if ( !m_tmpstack.empty() ) {
+    if ( !m_stack_table.empty() ) {
       // 是compound statement的呼叫
-      m_tmp_ID_table.add( m_curr_token );
+      ArrayList<Token> tmp = m_stack_table.pop();
+      tmp.add( m_curr_token );
+      m_stack_table.push( tmp );
     } // if
 
     Next_token(); // eat IDENT
@@ -1288,18 +1308,6 @@ class Parser{
     return Parse_Romce_and_romloe();
   } // Parse_Rest_of_PPMM_Identifier_started_basic_exp()
 
-  private boolean Parse_Sign() {
-    // '+' | '-' | '!'
-    if ( IsSign_2( m_curr_token ) ) {
-      Next_token();
-      return true;
-    } // if
-
-    else {
-      return false;
-    } // else
-  } // Parse_Sign()
-
   private boolean Parse_Actual_parameter_list() {
     // basic_expression { ',' basic_expression }
     if ( !Parse_Basic_expression() ) {
@@ -1315,18 +1323,6 @@ class Parser{
 
     return true;
   } // Parse_Actual_parameter_list()
-
-  private boolean Parse_Assignment_operator() {
-    // '=' | TE | DE | RE | PE | ME
-    if ( IsAssignmentOperator( m_curr_token ) ) {
-      Next_token();
-      return true;
-    } // if
-
-    else {
-      return false;
-    } // else
-  } // Parse_Assignment_operator()
 
   private boolean Parse_Romce_and_romloe() {
     // rest_of_maybe_logical_OR_exp [ '?' basic_expression ':' basic_expression ]
@@ -1874,10 +1870,16 @@ class Executor{
   ArrayList<Token> m_Func_table;
   ArrayList<Token> m_Arr_variables;
 
+  // 在compound statement中宣告的變數放這裡
+  Stack<ArrayList<Token>> m_stack_var;
+  Stack<ArrayList<Token>> m_stack_arr_var;
+
   Executor() {
     m_ID_table = new ArrayList<Token>();
     m_Func_table = new ArrayList<Token>();
     m_Arr_variables = new ArrayList<Token>();
+    m_stack_var = new Stack<ArrayList<Token>>();
+    m_stack_arr_var = new Stack<ArrayList<Token>>();
   } // Executor()
 
   private boolean Is_type_specifier( String tp ) {
@@ -2003,21 +2005,48 @@ class Executor{
         new_tk.Set_is_str( false );
       }
 
-      Add_Arr( new_tk );
+      if ( m_stack_arr_var.isEmpty() ) {
+        Add_Arr( new_tk ); // 不在compound statement中，放入一般table
+      }
+
+      else {
+      // 在compound statement中，pop出來新增在push回去
+        ArrayList<Token> stack_table = m_stack_arr_var.pop();
+        stack_table.add( tk );
+        m_stack_arr_var.push( stack_table );
+      }
     }
   }
 
   private String Get_Stat_method( ArrayList<Token> ins ) {
     // 檢查內建function call
+    boolean LAV = false;
+    boolean LV = false;
+    boolean LAF = false;
+    boolean LF = false;
+    boolean Assign = false;
+    boolean Cout = false;
+    boolean If = false;
+
     for ( int i = 0; i < ins.size() ; i++ ) {
       String n = ins.get( i ).Get_name();
-      if ( n.equals( "ListAllVariables" ) ) return "LAV";
-      else if ( n.equals( "ListVariable" ) ) return "LV";
-      else if ( n.equals( "ListAllFunctions" ) ) return "LAF";
-      else if ( n.equals( "ListFunction" ) ) return "LF";
-      else if ( n.equals( "=" ) ) return "ASSIGN"; // 有 "=" 一定是assign
-      else if ( n.equals( "cout" ) ) return "COUT";
+      if ( n.equals( "ListAllVariables" ) ) LAV = true;
+      else if ( n.equals( "ListVariable" ) ) LV = true;
+      else if ( n.equals( "ListAllFunctions" ) ) LAF = true;
+      else if ( n.equals( "ListFunction" ) ) LF = true;
+      else if ( n.equals( "=" ) ) Assign = true; // 有 "=" 一定是assign
+      else if ( n.equals( "cout" ) ) Cout = true;
+      else if ( n.equals( "if" ) ) If = true;
     } // for
+
+    // 這個先後順序是有權重關係的
+    if ( If ) return "IF";
+    if ( Cout ) return "COUT";
+    if ( Assign ) return "ASSIGN";
+    if ( LAV ) return "LAV";
+    if ( LV ) return "LV";
+    if ( LAF ) return "LAF";
+    if ( LF ) return "LF";
 
     return "NONE";
   } // Get_Stat_method()
@@ -2257,6 +2286,48 @@ class Executor{
       // array 變數
         ret = m_Arr_variables.get( idx );
       }
+
+      else if ( !m_stack_var.isEmpty() ) {
+      // 在compound statement中，從stack中找
+        ret = Get_ID_from_stacks( tk );
+      }
+    }
+
+    return ret;
+  }
+
+  private Token Get_ID_from_stacks( Token tk ) {
+  // 從兩個stack table中找到特定的ID
+    ArrayList<ArrayList<Token>> record1 = new ArrayList<ArrayList<Token>>(); // 紀錄ID table
+    ArrayList<ArrayList<Token>> record2 = new ArrayList<ArrayList<Token>>(); // 紀錄Arr table
+    Token ret = null;
+    String name = tk.Get_name();
+
+    while ( !m_stack_var.isEmpty() && !m_stack_arr_var.isEmpty() ) {
+      ArrayList<Token> tmp1 = m_stack_var.pop();
+      ArrayList<Token> tmp2 = m_stack_arr_var.pop();
+      record1.add( tmp1 );
+      record2.add( tmp2 );
+      String n;
+      for ( Token curr : tmp1 ) {
+        n = curr.Get_name();
+        if ( name.equals( n ) ) {
+          ret = curr;
+        }
+      }
+
+      for ( Token curr : tmp2 ) {
+        n = curr.Get_name();
+        if ( name.equals( n ) ) {
+          ret = curr;
+        }
+      }
+    }
+
+    // 把tables塞回stack中
+    for ( int i = record1.size() - 1; i >= 0; i-- ) {
+      m_stack_var.push( record1.get( i ) );
+      m_stack_arr_var.push( record2.get( i ) );
     }
 
     return ret;
@@ -2582,25 +2653,152 @@ class Executor{
     String val = Do_expr( expr );
 
     for ( String var : var_name ) {
-      // 把val的值寫入table中
-      idx = Get_ID_index( var );
-      if ( idx != -1 ) {
-        m_ID_table.get( idx ).Set_value( val );
-      }
-
-      else {
-        idx = Get_Arr_var_index( var );
-        m_Arr_variables.get( idx ).Set_value( val );
-      }
+    // 把val的值寫入table中
+      Token tmp_tk = new Token();
+      tmp_tk.Set_name( var );
+      tmp_tk = Get_ID_from_tables( tmp_tk );
+      tmp_tk.Set_value( val );
     }
 
     return val;
   }
 
+  private ArrayList<Token> Get_condition( ArrayList<Token> ins ) {
+  // 取得if或while的條件
+    int count = 0; // 經過文法檢查，括號一定是合法的
+    ArrayList<Token> condition = new ArrayList<Token>();
+
+    for ( Token tk : ins ) {
+      if ( tk.Get_name().equals( "(" ) ) {
+        count = count + 1;
+      }
+
+      if ( count > 0 ) {
+        condition.add( tk );
+      }
+
+      if ( tk.Get_name().equals( ")" ) ) {
+        count = count - 1;
+        if ( count == 0 ) {
+        // 一旦從正值變成0就代表condition結束了
+          break;
+        }
+      }
+    }
+
+    return condition;
+  }
+
+  private boolean Do_condition( ArrayList<Token> condition ) {
+  // 判斷條件是否成立
+    String result = Do_expr( condition );
+
+    if ( result.equals( "true" ) ) return true;
+    if ( result.equals( "false" ) ) return false;
+    if ( result.equals( "" ) ) return false;
+    if ( result.matches("-?\\d+(\\.\\d+)?") ) {
+    // result是數字
+      double db = Double.parseDouble( result );
+      if ( db == 0 ) return false;
+    }
+
+    return true;
+  }
+
+  private ArrayList<Token> Get_Compound_statements( ArrayList<Token> ins, int start_idx ) {
+    ArrayList<Token> result = new ArrayList<Token>();
+    int count = 0; // 計算括號成對
+    int count_IF = 0; // else跟著最近的if
+
+    for ( int i = start_idx; i < ins.size(); i++ ) {
+      Token tk = ins.get( i );
+      String name = tk.Get_name();
+
+      if ( name.equals( "if" ) ) {
+        result.add( tk );
+        count_IF = count_IF + 1;
+      }
+
+      else if ( name.equals( "{" ) ) {
+        result.add(tk);
+        count = count + 1;
+      }
+
+      else if ( name.equals( "}" ) ) {
+        result.add( tk );
+        count = count - 1;
+        if ( count == 0 ) {
+          break;
+        }
+      }
+
+      else if ( name.equals( "else" ) ) {
+        if ( count_IF > 0 ) {
+          result.add( tk );
+          count_IF = count_IF - 1;
+        }
+
+        else {
+          break;
+        }
+      }
+
+      else {
+        result.add( tk );
+      }
+    }
+
+    return result;
+  }
+
+  private ArrayList<Token> Get_statement( ArrayList<Token> ins, int start_idx ) {
+
+    String name = ins.get( start_idx ).Get_name();
+    ArrayList<Token> result = new ArrayList<Token>();
+
+    // compound statements包含條件要整個取出來
+    if ( name.equals( "if" ) ) {
+      result.add( ins.get( start_idx ) ); // 加入 if
+
+      ArrayList<Token> tmp = new ArrayList<Token>( ins.subList( start_idx, ins.size() ) );
+      tmp = Get_condition( tmp );
+      result.addAll( tmp );
+      start_idx = start_idx + tmp.size() + 1;
+
+      tmp = Get_Compound_statements( ins, start_idx );
+      result.addAll( tmp );
+      start_idx = start_idx + tmp.size();
+
+      if ( start_idx < ins.size() && ins.get( start_idx ).Get_name().equals( "else" ) ) {
+      // 有else也要取出來
+        result.add( ins.get( start_idx ) ); // 加入else
+
+        start_idx = start_idx + 1;
+        tmp = Get_Compound_statements( ins, start_idx );
+        result.addAll( tmp );
+      }
+    }
+
+    else {
+    // 一般statement
+      while ( !ins.get( start_idx ).Get_name().equals( ";" ) ) {
+        result.add( ins.get( start_idx ) );
+        start_idx = start_idx + 1;
+      }
+
+      result.add( ins.get( start_idx ) );
+    }
+
+    return result;
+  }
+
   public void Execute_ins( ArrayList<Token> ins ) {
 
     String ins_tp = Get_ins_type( ins );
-    System.out.print( "> " );
+    if ( m_stack_var.isEmpty() ) {
+      System.out.print( "> " );
+    }
+
     if ( ins_tp.equals( "def" ) ) {
       // 定義IDENT或是array
       String type = ins.get( 0 ).Get_name();
@@ -2615,7 +2813,6 @@ class Executor{
           int arr_size = -1;
           for ( Token tmp : declaration ) {
           // 處裡宣告內容
-
             if ( is_arr ) {
               arr_size = Integer.parseInt( tmp.Get_name() );
               is_arr = false;
@@ -2663,7 +2860,16 @@ class Executor{
           }
 
           if ( !re_decl ) {
-            Add_ID( tk );
+            if ( m_stack_var.isEmpty() ) {
+              Add_ID( tk ); // 不在compound statement中，放入一般table
+            }
+
+            else {
+            // 在compound statement中，pop出來新增在push回去
+              ArrayList<Token> stack_table = m_stack_var.pop();
+              stack_table.add( tk );
+              m_stack_var.push( stack_table );
+            }
           }
 
           declaration.clear();
@@ -2700,7 +2906,6 @@ class Executor{
     else {
       // statement
       String stat_tp = Get_Stat_method( ins );
-      Transform_arr_var( ins );
 
       if ( stat_tp.equals( "LAV" ) ) {
         Sort_ID_table();
@@ -2708,6 +2913,7 @@ class Executor{
       } // if
 
       else if ( stat_tp.equals( "LV" ) ) {
+        Transform_arr_var( ins );
         String  target = ins.get( 2 ).Get_name();
         if ( target.equals( "(" ) ) target = ins.get( 3 ).Get_name(); // 暴力解法?????
         target = target.replace( "\"", "" ); // 處理掉 "\""
@@ -2721,6 +2927,7 @@ class Executor{
       } // else if
 
       else if ( stat_tp.equals( "LF" ) ) {
+        Transform_arr_var( ins );
         String  target = ins.get( 2 ).Get_name();
         if ( target.equals( "(" ) ) target = ins.get( 3 ).Get_name(); // 暴力解法?????
         target = target.replace( "\"", "" ); // 處理掉 "\""
@@ -2729,17 +2936,19 @@ class Executor{
       } // else if
 
       else if ( stat_tp.equals( "ASSIGN" ) ) {
+        Transform_arr_var( ins );
         Assign_variables( ins );
       }
 
       else if ( stat_tp.equals( "COUT" ) ) {
       // cout
+        Transform_arr_var( ins );
         int idx = 2; // skip "cout" 、 "<<"
         boolean is_assign = false;
         ArrayList<Token> expr = new ArrayList<Token>();
         while ( idx < ins.size() ) {
         // 取出expression做運算、輸出
-          String tk_name = ins.get(idx).Get_name();
+          String tk_name = ins.get( idx ).Get_name();
           if ( tk_name.equals( "<<" ) || tk_name.equals( ">>" ) ) {
           // 一個expression完結
             if ( is_assign ) {
@@ -2779,7 +2988,45 @@ class Executor{
         expr.clear();
       }
 
-      System.out.println( "Statement executed ..." );
+      else if ( stat_tp.equals( "IF" ) ) {
+      // 進入compound statement
+        ArrayList<Token> t1 = new ArrayList<Token>();
+        ArrayList<Token> t2 = new ArrayList<Token>();
+        m_stack_var.push( t1 );
+        m_stack_arr_var.push( t2 );
+
+        ArrayList<Token> condition = Get_condition( ins );
+        int idx = condition.size() + 1; // 紀錄statements的開頭
+        ArrayList<Token> statements = Get_Compound_statements( ins, idx );
+
+        if ( !Do_condition( condition ) ) {
+        // 跳過if的內容、跳過else
+          idx = idx + statements.size() + 1;
+          statements = Get_Compound_statements( ins, idx ); // 跳過if的內容、跳過else
+        }
+
+        if ( !statements.isEmpty() && statements.get( 0 ).Get_name().equals( "{" ) ) {
+          // 移除大括號
+          statements.remove( 0 );
+          statements.remove( statements.size() - 1 );
+        }
+
+        // 執行statements
+        idx = 0;
+
+        while ( idx < statements.size() ) {
+          ArrayList<Token> statement = Get_statement( statements, idx );
+          idx = idx + statement.size() ;
+          Execute_ins( statement );
+        }
+
+        m_stack_var.pop();
+        m_stack_arr_var.pop();
+      }
+
+      if ( m_stack_var.isEmpty() ) {
+        System.out.println( "Statement executed ..." );
+      }
     } // else
   } // Execute_ins()
 } // class Executor
