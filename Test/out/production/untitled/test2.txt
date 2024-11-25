@@ -1,0 +1,51 @@
+2
+
+int SIZE;
+SIZE = 5;
+int arr[5];
+int i, j;
+
+// 初始化陣列
+i = 0;
+while ( i < SIZE ) {
+  arr[i] = 10 - i;
+  i = i + 1;
+}
+
+// 輸出原始陣列
+i = 0;
+cout << "原始陣列為： ";
+while ( i < SIZE ) {
+  cout << arr[i] << "  ";
+  i = i + 1;
+}
+
+// 執行排序
+i = 0;
+
+while ( i < SIZE - 1 ) {
+  j = 0;
+  while ( j < SIZE - i - 1 ) {
+    if ( arr[j] > arr[j + 1] ) {
+      int tmp;
+      tmp = arr[j];
+      arr[j] = arr[j+1];
+      arr[j+1] = tmp;
+    }
+
+    j = j + 1;
+  }
+
+  i = i + 1;
+}
+
+// 輸出排序後陣列
+i = 0;
+cout << "排序後陣列為： ";
+while ( i < SIZE ) {
+  cout << arr[i] << "  ";
+  i = i + 1;
+}
+
+
+Done();

@@ -4,7 +4,7 @@ import java.util.Scanner;
 import java.util.ArrayList;
 import java.util.Stack;
 
-class Token{
+class Token implements Cloneable{
 // only ID may have value
 // 4.3 is a NUM, name is 4.3
 
@@ -52,6 +52,16 @@ class Token{
 
   public boolean Is_str() {
     return m_is_str;
+  }
+
+  public Token clone( Token origin ) {
+    Token copy = new Token();
+    copy.Set_name( origin.Get_name() );
+    copy.Set_value( origin.Get_value() );
+    copy.Set_type( origin.Get_type() );
+    copy.Set_is_str( origin.Is_str() );
+    copy.Set_def_ins( origin.Get_def_ins() );
+    return copy;
   }
 } // class Token
 
@@ -1882,6 +1892,15 @@ class Executor{
     m_stack_arr_var = new Stack<ArrayList<Token>>();
   } // Executor()
 
+  private ArrayList<Token> DeepCopy( ArrayList<Token> origin ) {
+    ArrayList<Token> copy = new ArrayList<Token>();
+    for ( Token tk : origin ) {
+      copy.add( tk.clone( tk ) ); // 使用 Token 的 clone() 方法
+    }
+
+    return copy;
+  }
+
   private boolean Is_type_specifier( String tp ) {
     if ( tp.equals( "INT" ) || tp.equals( "CHAR" ) || tp.equals( "FLOAT" ) ) return true;
     else if ( tp.equals( "STRING" ) || tp.equals( "BOOL" ) ) return true;
@@ -1908,22 +1927,37 @@ class Executor{
     else return "stat";
   } // Get_ins_type()
 
+  private ArrayList<Token> Get_index( ArrayList<Token> ins, int idx ) {
+  // 把 [ ] 內的東西取出來、計算結果
+    ArrayList<Token> record = new ArrayList<Token>();
+    for ( ; idx < ins.size(); idx++ ) {
+      record.add( ins.get( idx ) );
+      if ( ins.get( idx ).Get_name().equals( "]" ) ) {
+        break;
+      }
+    }
+
+    return record;
+  }
+
   private void Transform_arr_var( ArrayList<Token> ins ) {
   // 把arr[0] 換成 _arr0
     ArrayList<Token> new_ins = new ArrayList<Token>(); // 這樣比較好處理
     for ( int i = 0; i < ins.size(); i++ ) {
       if ( ins.get( i ).Get_name().equals( "[" ) ) {
-      // 把上一個tk跟下兩個tk結合
-        Token last1 = ins.get( i - 1 );
-        Token next1 = ins.get( i + 1 );
-        String str = "_" + last1.Get_name() + next1.Get_name();
+      // 組合出 [idx]
+        Token arr_name = ins.get( i - 1 );
+        ArrayList<Token> arr_index = Get_index( ins, i );
+        // 跳過[idx]
+        i = i + arr_index.size() - 1; // for迴圈會幫忙 +1
+        arr_index.remove( 0 );
+        arr_index.remove( arr_index.size() - 1 );
+        String str = "_" + arr_name.Get_name() + Do_expr( arr_index );
         int idx = Get_Arr_var_index( str );
         if ( idx != -1 ) {
           new_ins.remove( new_ins.size() - 1 ); // 當下最後一個token是"["
           new_ins.add( m_Arr_variables.get( idx ) );
         }
-
-        i = i + 2; // skip token
       }
 
       else {
@@ -2026,8 +2060,8 @@ class Executor{
     boolean LF = false;
     boolean Assign = false;
     boolean Cout = false;
-    boolean If = false;
 
+    // if 跟 while同時出現時誰比較早出現以他為準
     for ( int i = 0; i < ins.size() ; i++ ) {
       String n = ins.get( i ).Get_name();
       if ( n.equals( "ListAllVariables" ) ) LAV = true;
@@ -2036,11 +2070,11 @@ class Executor{
       else if ( n.equals( "ListFunction" ) ) LF = true;
       else if ( n.equals( "=" ) ) Assign = true; // 有 "=" 一定是assign
       else if ( n.equals( "cout" ) ) Cout = true;
-      else if ( n.equals( "if" ) ) If = true;
+      else if ( n.equals( "if" ) ) return "IF";
+      else if ( n.equals( "while" ) ) return "WHILE";
     } // for
 
     // 這個先後順序是有權重關係的
-    if ( If ) return "IF";
     if ( Cout ) return "COUT";
     if ( Assign ) return "ASSIGN";
     if ( LAV ) return "LAV";
@@ -2395,6 +2429,8 @@ class Executor{
 
   private String Evaluate_postfix( ArrayList<Token> postfix ) {
     Stack<Token> s = new Stack<Token>();
+    boolean isINT = true; // 看回傳要不要有小數點
+    String ret;
 
     for ( Token tk : postfix ) {
       String name = tk.Get_name();
@@ -2450,6 +2486,13 @@ class Executor{
         new_tk.Set_name( Do_arith( name, s2, s1 ) );
         new_tk.Set_type( "CONST" );
         s.push( new_tk );
+
+        if ( !new_tk.Get_name().equals( "true" ) && !new_tk.Get_name().equals( "false" ) ) {
+        // 數值運算，檢查有沒有小數點
+          if ( new_tk.Get_name().matches( "-?\\d+(\\.\\d+)?" ) ) {
+            isINT = false;
+          }
+        }
       }
 
       else {
@@ -2461,31 +2504,68 @@ class Executor{
     if ( tk.Get_type().equals( "IDENT" ) ) {
       // 正常經過運算後IDENT會被轉成value計算，沒經過運算要轉換
       tk = Get_ID_from_tables( tk );
-      return tk.Get_value();
+      ret = tk.Get_value();
     }
 
-    else return tk.Get_name();
+    else {
+      ret = tk.Get_name();
+    }
+
+    if ( !ret.equals( "true" ) && !ret.equals( "false" ) ) {
+    // 結果是數值
+      if ( ret.matches( "-?\\d+(\\.\\d+)?" ) ) {
+        isINT = false;
+      }
+
+      if ( isINT ) {
+      // 把小數點部分去除
+        int val = ( int ) Double.parseDouble( ret );
+        return Integer.toString( val );
+      }
+
+      else {
+        return ret;
+      }
+    }
+
+    else {
+    // 結果是布林
+      return ret;
+    }
   }
 
   private String Do_arith( String op, String s1, String s2 ) {
+  // s1、s2只會是數字或是布林
+
+    boolean ret_db = false; // 處理回傳格式
+
+    if ( s1.matches( "^-?\\d+\\.\\d+$" ) ||  s2.matches( "^-?\\d+\\.\\d+$" ) ) {
+      ret_db = true;
+    }
+
     if ( op.equals( "+" ) ) {
-      return Double.toString(Double.parseDouble(s1) + Double.parseDouble(s2));
+      if ( ret_db ) return Double.toString(Double.parseDouble( s1 ) + Double.parseDouble( s2 ) );
+      else return Integer.toString( Integer.parseInt( s1 ) + Integer.parseInt( s2 ) );
     }
 
     else if ( op.equals( "-" ) ) {
-      return Double.toString(Double.parseDouble(s1) - Double.parseDouble(s2));
+      if ( ret_db ) return Double.toString(Double.parseDouble( s1 ) - Double.parseDouble( s2 ) );
+      else return Integer.toString( Integer.parseInt( s1 ) - Integer.parseInt( s2 ) );
     }
 
     else if ( op.equals( "*" ) ) {
-      return Double.toString(Double.parseDouble(s1) * Double.parseDouble(s2));
+      if ( ret_db ) return Double.toString(Double.parseDouble( s1 ) * Double.parseDouble( s2 ) );
+      else return Integer.toString( Integer.parseInt( s1 ) * Integer.parseInt( s2 ) );
     }
 
     else if ( op.equals( "/" ) ) {
-      return Double.toString(Double.parseDouble(s1) / Double.parseDouble(s2));
+      if ( ret_db ) return Double.toString(Double.parseDouble( s1 ) / Double.parseDouble( s2 ) );
+      else return Integer.toString( Integer.parseInt( s1 ) / Integer.parseInt( s2 ) );
     }
 
     else if ( op.equals( "%" ) ) {
-      return Double.toString(Double.parseDouble(s1) % Double.parseDouble(s2));
+      if ( ret_db ) return Double.toString(Double.parseDouble( s1 ) % Double.parseDouble( s2 ) );
+      else return Integer.toString( Integer.parseInt( s1 ) % Integer.parseInt( s2 ) );
     }
 
     else if ( op.equals( "!" ) ) {
@@ -2664,7 +2744,7 @@ class Executor{
   }
 
   private ArrayList<Token> Get_condition( ArrayList<Token> ins ) {
-  // 取得if或while的條件
+  // 取得if或while的條件，包含 "(" 、 ")"
     int count = 0; // 經過文法檢查，括號一定是合法的
     ArrayList<Token> condition = new ArrayList<Token>();
 
@@ -2692,7 +2772,6 @@ class Executor{
   private boolean Do_condition( ArrayList<Token> condition ) {
   // 判斷條件是否成立
     String result = Do_expr( condition );
-
     if ( result.equals( "true" ) ) return true;
     if ( result.equals( "false" ) ) return false;
     if ( result.equals( "" ) ) return false;
@@ -2779,6 +2858,26 @@ class Executor{
       }
     }
 
+    else if ( name.equals( "while" ) ) {
+    //  while只要依據大括號成對去抓statements就好
+      int count = 0; // 計算大括號成對
+      for ( ; start_idx < ins.size(); start_idx++ ) {
+        Token tk = ins.get( start_idx );
+        String tk_name = tk.Get_name();
+        result.add( tk );
+        if ( tk_name.equals( "{" ) ) {
+          count = count + 1;
+        }
+
+        else if ( tk_name.equals( "}" ) ) {
+          count = count - 1;
+          if ( count == 0 ) {
+            break;
+          }
+        }
+      }
+    }
+
     else {
     // 一般statement
       while ( !ins.get( start_idx ).Get_name().equals( ";" ) ) {
@@ -2792,9 +2891,54 @@ class Executor{
     return result;
   }
 
+  private ArrayList<Token> Get_WHILE_statements( ArrayList<Token> ins, int start_idx ) {
+  // start_idx 會指向 condition 的下一個 token
+    ArrayList<Token> result = new ArrayList<Token>();
+    int count = 0; // 計算括號成對
+
+    if ( ins.get( start_idx ).Get_name().equals( "{" ) ) {
+    // 有大括號的while
+      for ( ; start_idx < ins.size(); start_idx++ ) {
+        Token tk = ins.get( start_idx );
+        String name = tk.Get_name();
+        if ( name.equals( "{" ) ) {
+          count = count + 1;
+          result.add( tk );
+        }
+
+        else if ( name.equals( "}" ) ) {
+          count = count - 1;
+          result.add( tk );
+          if ( count == 0 ) {
+            break;
+          }
+        }
+
+        else {
+          result.add( tk );
+        }
+      }
+    }
+
+    else {
+    // 沒有大括號的while
+      for ( ; start_idx < ins.size(); start_idx++ ) {
+        Token tk = ins.get( start_idx );
+        String name = tk.Get_name();
+        result.add( tk );
+        if ( name.equals( ";" ) ) {
+          break;
+        }
+      }
+    }
+
+    return result;
+  }
+
   public void Execute_ins( ArrayList<Token> ins ) {
 
     String ins_tp = Get_ins_type( ins );
+    // compound statement 裡面的呼叫就不需要輸出這個
     if ( m_stack_var.isEmpty() ) {
       System.out.print( "> " );
     }
@@ -2831,14 +2975,14 @@ class Executor{
           boolean re_decl = false;
           if ( In_ID_table( tk ) ) {
           // 重複定義
-            System.out.println( "New definition of " + tk.Get_name() + " entered ..." );
+            if ( m_stack_var.isEmpty() ) System.out.println( "New definition of " + tk.Get_name() + " entered ..." ); // 一直輸出有點吵
             tk = m_ID_table.get( Get_ID_index( tk.Get_name() ) );
             re_decl = true;
           }
 
           else {
           // 第一次定義
-            System.out.println( "Definition of " + tk.Get_name() + " entered ..." );
+            if ( m_stack_var.isEmpty() ) System.out.println( "Definition of " + tk.Get_name() + " entered ..." ); // 一直輸出有點吵
           }
 
           if ( type.equals( "char" ) || type.equals( "string" ) ) {
@@ -3024,6 +3168,39 @@ class Executor{
         m_stack_arr_var.pop();
       }
 
+      else if ( stat_tp.equals( "WHILE" ) ) {
+      // 進入compound statement
+        ArrayList<Token> t1 = new ArrayList<Token>();
+        ArrayList<Token> t2 = new ArrayList<Token>();
+        m_stack_var.push( t1 );
+        m_stack_arr_var.push( t2 );
+
+        ArrayList<Token> condition = Get_condition( ins );
+        int idx = condition.size() + 1; // 紀錄statements的開頭
+        ArrayList<Token> statements = Get_WHILE_statements( ins, idx );
+
+        if ( !statements.isEmpty() && statements.get( 0 ).Get_name().equals( "{" ) ) {
+        // 移除大括號
+          statements.remove( 0 );
+          statements.remove( statements.size() - 1 );
+        }
+
+        while ( Do_condition( condition ) ) {
+        // while 的內容全部都要做一次
+          idx = 0;
+          ArrayList<Token> copy = DeepCopy( statements ); // 怕之後statement處裡時動到原本的statements
+
+          while ( idx < copy.size() ) {
+            ArrayList<Token> statement = Get_statement( copy, idx );
+            idx = idx + statement.size() ;
+            Execute_ins( statement );
+          }
+        }
+
+        m_stack_var.pop();
+        m_stack_arr_var.pop();
+      }
+
       if ( m_stack_var.isEmpty() ) {
         System.out.println( "Statement executed ..." );
       }
@@ -3035,7 +3212,7 @@ class Main {
   public static void main( String[] args ) {
 
     Scanner sc = new Scanner( System.in );
-    String trash = sc.nextLine(); // 題號
+    String title = sc.nextLine(); // 題號
 
     Reader reader = new Reader( sc );
     Executor executor = new Executor();

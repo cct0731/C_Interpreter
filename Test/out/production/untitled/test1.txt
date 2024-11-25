@@ -1,0 +1,41 @@
+1
+// 不支援字串的比較運算，只要是字串運算一律當成串接做運算!!!
+
+string msg[5];
+string weather;
+
+msg[0] = "你好";
+msg[1] = "今天";
+msg[2] = "天氣";
+msg[3] = "真的";
+
+weather = "陰天";
+
+int a ;
+a  = 
+123 ;
+
+if ( a == 122 ) {
+  msg[4] = "好好! ";
+  cout << true ;
+}
+
+else {
+  int b;
+  b = 0 ;
+  if (b == 123 )
+  msg[4] = "有夠差! ";
+  else
+  msg[4] = "好差" ;
+}
+
+cout << msg[0] + msg[1] + msg[2] + msg[3] + msg[4];
+
+cout << 
+
+
+
+b;
+
+
+Done();
